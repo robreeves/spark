@@ -116,18 +116,26 @@ Datetime Functions
     :toctree: api/
 
     add_months
+    convert_timezone
     curdate
     current_date
     current_timestamp
     current_timezone
     date_add
+    date_diff
     date_format
+    date_from_unix_date
     date_sub
     date_trunc
+    dateadd
     datediff
+    day
+    date_part
+    datepart
     dayofmonth
     dayofweek
     dayofyear
+    extract
     second
     weekofyear
     year
@@ -146,6 +154,7 @@ Datetime Functions
     next_day
     hour
     make_date
+    now
     from_unixtime
     unix_timestamp
     to_unix_timestamp
@@ -156,8 +165,11 @@ Datetime Functions
     trunc
     from_utc_timestamp
     to_utc_timestamp
+    weekday
     window
     session_window
+    timestamp_micros
+    timestamp_millis
     timestamp_seconds
     unix_date
     unix_micros
@@ -258,6 +270,9 @@ Aggregate Functions
     approx_count_distinct
     approx_percentile
     avg
+    bit_and
+    bit_or
+    bit_xor
     bool_and
     bool_or
     collect_list
@@ -351,20 +366,36 @@ String Functions
     ascii
     base64
     bit_length
+    btrim
+    char
+    character_length
+    char_length
+    chr
     concat_ws
+    contains
     decode
+    elt
     encode
+    endswith
+    find_in_set
     format_number
     format_string
+    ilike
     initcap
     instr
+    lcase
     length
+    like
     lower
+    left
     levenshtein
     locate
     lpad
     ltrim
     octet_length
+    parse_url
+    position
+    printf
     rlike
     regexp
     regexp_like
@@ -374,12 +405,18 @@ String Functions
     regexp_replace
     regexp_substr
     regexp_instr
+    replace
+    right
+    ucase
     unbase64
     rpad
     repeat
     rtrim
     soundex
     split
+    split_part
+    startswith
+    substr
     substring
     substring_index
     overlay
@@ -390,6 +427,18 @@ String Functions
     translate
     trim
     upper
+    url_decode
+    url_encode
+
+
+Bitwise Functions
+-----------------
+.. autosummary::
+    :toctree: api/
+
+    bit_count
+    bit_get
+    getbit
 
 
 UDF

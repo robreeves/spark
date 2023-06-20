@@ -1009,6 +1009,18 @@ class PlanGenerationTestSuite
     fn.histogram_numeric(fn.col("a"), lit(10))
   }
 
+  functionTest("bit_and") {
+    fn.bit_and(fn.col("a"))
+  }
+
+  functionTest("bit_or") {
+    fn.bit_or(fn.col("a"))
+  }
+
+  functionTest("bit_xor") {
+    fn.bit_xor(fn.col("a"))
+  }
+
   functionTest("mode") {
     fn.mode(fn.col("a"))
   }
@@ -1207,6 +1219,18 @@ class PlanGenerationTestSuite
 
   functionTest("bitwise_not") {
     fn.bitwise_not(fn.col("a"))
+  }
+
+  functionTest("bit_count") {
+    fn.bit_count(fn.col("a"))
+  }
+
+  functionTest("bit_get") {
+    fn.bit_get(fn.col("a"), lit(0))
+  }
+
+  functionTest("getbit") {
+    fn.getbit(fn.col("a"), lit(0))
   }
 
   functionTest("expr") {
@@ -1693,6 +1717,14 @@ class PlanGenerationTestSuite
     fn.hours(Column("a"))
   }
 
+  temporalFunctionTest("convert_timezone with source time zone") {
+    fn.convert_timezone(lit("\"Africa/Dakar\""), lit("\"Asia/Urumqi\""), fn.col("t"))
+  }
+
+  temporalFunctionTest("convert_timezone without source time zone") {
+    fn.convert_timezone(lit("\"Asia/Urumqi\""), fn.col("t"))
+  }
+
   functionTest("make_dt_interval days hours mins secs") {
     fn.make_dt_interval(fn.col("a"), fn.col("a"), fn.col("a"), fn.col("b"))
   }
@@ -1885,6 +1917,10 @@ class PlanGenerationTestSuite
     fn.current_timestamp()
   }
 
+  temporalFunctionTest("now") {
+    fn.now()
+  }
+
   temporalFunctionTest("localtimestamp") {
     fn.localtimestamp()
   }
@@ -1897,12 +1933,24 @@ class PlanGenerationTestSuite
     fn.date_add(fn.col("d"), 2)
   }
 
+  temporalFunctionTest("dateadd") {
+    fn.dateadd(fn.col("d"), lit(2))
+  }
+
   temporalFunctionTest("date_sub") {
     fn.date_sub(fn.col("d"), 2)
   }
 
   temporalFunctionTest("datediff") {
     fn.datediff(fn.col("d"), fn.make_date(lit(2020), lit(10), lit(10)))
+  }
+
+  temporalFunctionTest("date_diff") {
+    fn.date_diff(fn.col("d"), fn.make_date(lit(2020), lit(10), lit(10)))
+  }
+
+  temporalFunctionTest("date_from_unix_date") {
+    fn.date_from_unix_date(lit(10))
   }
 
   temporalFunctionTest("year") {
@@ -1925,6 +1973,10 @@ class PlanGenerationTestSuite
     fn.dayofmonth(fn.col("d"))
   }
 
+  temporalFunctionTest("day") {
+    fn.day(fn.col("d"))
+  }
+
   temporalFunctionTest("dayofyear") {
     fn.dayofyear(fn.col("d"))
   }
@@ -1939,6 +1991,10 @@ class PlanGenerationTestSuite
 
   temporalFunctionTest("minute") {
     fn.minute(fn.col("t"))
+  }
+
+  temporalFunctionTest("weekday") {
+    fn.weekday(fn.col("d"))
   }
 
   temporalFunctionTest("make_date") {
@@ -1963,6 +2019,18 @@ class PlanGenerationTestSuite
 
   temporalFunctionTest("weekofyear") {
     fn.weekofyear(fn.col("d"))
+  }
+
+  temporalFunctionTest("extract") {
+    fn.extract(lit("year"), fn.col("d"))
+  }
+
+  temporalFunctionTest("date_part") {
+    fn.date_part(lit("year"), fn.col("d"))
+  }
+
+  temporalFunctionTest("datepart") {
+    fn.datepart(lit("year"), fn.col("d"))
   }
 
   temporalFunctionTest("from_unixtime") {
@@ -2078,6 +2146,14 @@ class PlanGenerationTestSuite
 
   temporalFunctionTest("timestamp_seconds") {
     fn.timestamp_seconds(fn.col("x"))
+  }
+
+  temporalFunctionTest("timestamp_millis") {
+    fn.timestamp_millis(fn.col("x"))
+  }
+
+  temporalFunctionTest("timestamp_micros") {
+    fn.timestamp_micros(fn.col("x"))
   }
 
   // Array of Long
@@ -2367,7 +2443,63 @@ class PlanGenerationTestSuite
   }
 
   functionTest("to_number") {
-    fn.to_char(fn.col("g"), lit("$99.99"))
+    fn.to_number(fn.col("g"), lit("$99.99"))
+  }
+
+  functionTest("replace") {
+    fn.replace(fn.col("g"), fn.col("g"))
+  }
+
+  functionTest("replace with specified string") {
+    fn.replace(fn.col("g"), fn.col("g"), fn.col("g"))
+  }
+
+  functionTest("split_part") {
+    fn.split_part(fn.col("g"), fn.col("g"), fn.col("a"))
+  }
+
+  functionTest("substr") {
+    fn.substr(fn.col("g"), fn.col("a"))
+  }
+
+  functionTest("substr with len") {
+    fn.substr(fn.col("g"), fn.col("a"), fn.col("a"))
+  }
+
+  functionTest("parse_url") {
+    fn.parse_url(fn.col("g"), fn.col("g"))
+  }
+
+  functionTest("parse_url with key") {
+    fn.parse_url(fn.col("g"), fn.col("g"), fn.col("g"))
+  }
+
+  functionTest("printf") {
+    fn.printf(fn.col("g"), fn.col("a"), fn.col("g"))
+  }
+
+  functionTest("url_decode") {
+    fn.url_decode(fn.col("g"))
+  }
+
+  functionTest("url_encode") {
+    fn.url_encode(fn.col("g"))
+  }
+
+  functionTest("position") {
+    fn.position(fn.col("g"), fn.col("g"))
+  }
+
+  functionTest("position with start") {
+    fn.position(fn.col("g"), fn.col("g"), fn.col("a"))
+  }
+
+  functionTest("endswith") {
+    fn.endswith(fn.col("g"), fn.col("g"))
+  }
+
+  functionTest("startswith") {
+    fn.startswith(fn.col("g"), fn.col("g"))
   }
 
   functionTest("to_timestamp_ltz") {
@@ -2416,6 +2548,74 @@ class PlanGenerationTestSuite
 
   functionTest("nvl2") {
     fn.nvl2(fn.col("g"), fn.col("g"), fn.col("g"))
+  }
+
+  functionTest("char") {
+    fn.char(fn.col("a"))
+  }
+
+  functionTest("btrim") {
+    fn.btrim(fn.col("g"))
+  }
+
+  functionTest("btrim with specified trim string") {
+    fn.btrim(fn.col("g"), fn.col("g"))
+  }
+
+  functionTest("char_length") {
+    fn.char_length(fn.col("g"))
+  }
+
+  functionTest("character_length") {
+    fn.character_length(fn.col("g"))
+  }
+
+  functionTest("chr") {
+    fn.chr(fn.col("a"))
+  }
+
+  functionTest("contains") {
+    fn.contains(fn.col("g"), fn.col("g"))
+  }
+
+  functionTest("elt") {
+    fn.elt(fn.col("a"), fn.col("g"), fn.col("g"))
+  }
+
+  functionTest("find_in_set") {
+    fn.find_in_set(fn.col("g"), fn.col("g"))
+  }
+
+  functionTest("like") {
+    fn.like(fn.col("g"), fn.col("g"))
+  }
+
+  functionTest("like with escape") {
+    fn.like(fn.col("g"), fn.col("g"), lit('/'))
+  }
+
+  functionTest("ilike") {
+    fn.ilike(fn.col("g"), fn.col("g"))
+  }
+
+  functionTest("ilike with escape") {
+    fn.ilike(fn.col("g"), fn.col("g"), lit('/'))
+  }
+
+  functionTest("lcase") {
+    fn.lcase(fn.col("g"))
+  }
+
+  functionTest("ucase") {
+    fn.ucase(fn.col("g"))
+  }
+
+  functionTest("left") {
+    fn.left(fn.col("g"), fn.col("g"))
+  }
+
+  functionTest("right") {
+    fn.right(fn.col("g"), fn.col("g"))
   }
 
   test("groupby agg") {

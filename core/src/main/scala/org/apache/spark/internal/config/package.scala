@@ -1146,6 +1146,13 @@ package object config {
     .bytesConf(ByteUnit.BYTE)
     .createWithDefault(4 * 1024 * 1024)
 
+  private[spark] val HADOOP_COMMIT_PARALLELISM =
+    ConfigBuilder("spark.hadoop.commit.parallelism")
+      .doc("The parallelism level for file operations during the Hadoop commit phase of a job")
+      .version("3.5.1")
+      .intConf
+      .createWithDefault(1)
+
   private[spark] val HADOOP_RDD_IGNORE_EMPTY_SPLITS =
     ConfigBuilder("spark.hadoopRDD.ignoreEmptySplits")
       .internal()

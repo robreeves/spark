@@ -21,6 +21,7 @@ import java.io.IOException
 import java.util.{Date, UUID}
 
 import scala.collection.mutable
+import scala.collection.parallel.ForkJoinTaskSupport
 import scala.util.Try
 
 import org.apache.hadoop.conf.Configurable
@@ -29,7 +30,9 @@ import org.apache.hadoop.mapreduce._
 import org.apache.hadoop.mapreduce.lib.output.FileOutputCommitter
 import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl
 
+import org.apache.spark.SparkEnv
 import org.apache.spark.internal.Logging
+import org.apache.spark.internal.config.HADOOP_COMMIT_PARALLELISM
 import org.apache.spark.mapred.SparkHadoopMapRedUtil
 
 /**
@@ -199,41 +202,55 @@ class HadoopMapReduceCommitProtocol(
       val filesToMove = allAbsPathFiles.foldLeft(Map[String, String]())(_ ++ _)
       logDebug(s"Committing files staged for absolute locations $filesToMove")
       val absParentPaths = filesToMove.values.map(new Path(_).getParent).toSet
-      if (dynamicPartitionOverwrite) {
-        logDebug(s"Clean up absolute partition directories for overwriting: $absParentPaths")
-        absParentPaths.foreach(fs.delete(_, true))
-      }
-      logDebug(s"Create absolute parent directories: $absParentPaths")
-      absParentPaths.foreach(fs.mkdirs)
-      for ((src, dst) <- filesToMove) {
-        if (!fs.rename(new Path(src), new Path(dst))) {
-          throw new IOException(s"Failed to rename $src to $dst when committing files staged for " +
-            s"absolute locations")
-        }
-      }
+      val absParentPathsPar = absParentPaths.par
 
-      if (dynamicPartitionOverwrite) {
-        val partitionPaths = allPartitionPaths.foldLeft(Set[String]())(_ ++ _)
-        logDebug(s"Clean up default partition directories for overwriting: $partitionPaths")
-        for (part <- partitionPaths) {
-          val finalPartPath = new Path(path, part)
-          if (!fs.delete(finalPartPath, true) && !fs.exists(finalPartPath.getParent)) {
-            // According to the official hadoop FileSystem API spec, delete op should assume
-            // the destination is no longer present regardless of return value, thus we do not
-            // need to double check if finalPartPath exists before rename.
-            // Also in our case, based on the spec, delete returns false only when finalPartPath
-            // does not exist. When this happens, we need to take action if parent of finalPartPath
-            // also does not exist(e.g. the scenario described on SPARK-23815), because
-            // FileSystem API spec on rename op says the rename dest(finalPartPath) must have
-            // a parent that exists, otherwise we may get unexpected result on the rename.
-            fs.mkdirs(finalPartPath.getParent)
-          }
-          val stagingPartPath = new Path(stagingDir, part)
-          if (!fs.rename(stagingPartPath, finalPartPath)) {
-            throw new IOException(s"Failed to rename $stagingPartPath to $finalPartPath when " +
-              s"committing files staged for overwriting dynamic partitions")
+      val commitParallelism = SparkEnv.get.conf.get(HADOOP_COMMIT_PARALLELISM)
+      val forkJoinPool = new java.util.concurrent.ForkJoinPool(commitParallelism)
+      try {
+        absParentPathsPar.tasksupport = new ForkJoinTaskSupport(forkJoinPool)
+
+        if (dynamicPartitionOverwrite) {
+          logDebug(s"Clean up absolute partition directories for overwriting: $absParentPaths")
+          absParentPathsPar.foreach(fs.delete(_, true))
+        }
+        logDebug(s"Create absolute parent directories: $absParentPaths")
+        absParentPathsPar.foreach(fs.mkdirs)
+        for ((src, dst) <- filesToMove) {
+          if (!fs.rename(new Path(src), new Path(dst))) {
+            throw new IOException(s"Failed to rename $src to $dst when committing files " +
+              s"staged for absolute locations")
           }
         }
+
+        if (dynamicPartitionOverwrite) {
+          val partitionPaths = allPartitionPaths.foldLeft(Set[String]())(_ ++ _).par
+          logDebug(s"Clean up default partition directories for overwriting: $partitionPaths")
+
+          val partitionPathsPar = partitionPaths.par
+          partitionPathsPar.tasksupport = new ForkJoinTaskSupport(forkJoinPool)
+          partitionPaths.par.foreach { part =>
+            val finalPartPath = new Path(path, part)
+            if (!fs.delete(finalPartPath, true) && !fs.exists(finalPartPath.getParent)) {
+              // According to the official hadoop FileSystem API spec, delete op should assume
+              // the destination is no longer present regardless of return value, thus we do not
+              // need to double check if finalPartPath exists before rename.
+              // Also in our case, based on the spec, delete returns false only when finalPartPath
+              // does not exist. When this happens, we need to take action if parent of
+              // finalPartPath also does not exist(e.g. the scenario described on SPARK-23815),
+              // because FileSystem API spec on rename op says the rename dest(finalPartPath)
+              // must have  a parent that exists, otherwise we may get unexpected result on the
+              // rename.
+              fs.mkdirs(finalPartPath.getParent)
+            }
+            val stagingPartPath = new Path(stagingDir, part)
+            if (!fs.rename(stagingPartPath, finalPartPath)) {
+              throw new IOException(s"Failed to rename $stagingPartPath to $finalPartPath when " +
+                s"committing files staged for overwriting dynamic partitions")
+            }
+          }
+        }
+      } finally {
+        forkJoinPool.shutdown()
       }
 
       fs.delete(stagingDir, true)

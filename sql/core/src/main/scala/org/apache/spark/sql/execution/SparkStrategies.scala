@@ -243,11 +243,14 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
       //      other choice.
       case j @ ExtractEquiJoinKeys(joinType, leftKeys, rightKeys, nonEquiCond,
           _, left, right, hint) =>
+
+        val leftWithStats = JoinKeyStats(left, leftKeys)
+
         val hashJoinSupport = hashJoinSupported(leftKeys, rightKeys)
         def createBroadcastHashJoin(onlyLookingAtHint: Boolean) = {
           if (hashJoinSupport) {
             val buildSide = getBroadcastBuildSide(
-              left, right, joinType, hint, onlyLookingAtHint, conf)
+              leftWithStats, right, joinType, hint, onlyLookingAtHint, conf)
             checkHintBuildSide(onlyLookingAtHint, buildSide, joinType, hint, true)
             buildSide.map {
               buildSide =>
@@ -257,7 +260,7 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
                   joinType,
                   buildSide,
                   nonEquiCond,
-                  planLater(left),
+                  planLater(leftWithStats),
                   planLater(right)))
             }
           } else {
@@ -1010,6 +1013,8 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
       case WriteFiles(child, fileFormat, partitionColumns, bucket, options, staticPartitions) =>
         WriteFilesExec(planLater(child), fileFormat, partitionColumns, bucket, options,
           staticPartitions) :: Nil
+      case j: JoinKeyStats =>
+        execution.joins.JoinKeyStatsExec(planLater(j.child), j.keys) :: Nil
       case _ => Nil
     }
   }

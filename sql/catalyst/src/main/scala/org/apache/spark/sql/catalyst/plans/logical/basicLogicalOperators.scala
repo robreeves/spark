@@ -549,6 +549,12 @@ case class Union(
     copy(children = newChildren)
 }
 
+case class JoinKeyStats(child: LogicalPlan, keys: Seq[Expression]) extends UnaryNode {
+  override def output: Seq[Attribute] = child.output
+  override protected def withNewChildInternal(newChild: LogicalPlan): JoinKeyStats =
+    copy(child = newChild)
+}
+
 case class Join(
     left: LogicalPlan,
     right: LogicalPlan,

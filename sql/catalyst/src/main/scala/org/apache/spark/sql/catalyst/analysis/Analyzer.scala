@@ -351,7 +351,8 @@ class Analyzer(override val catalogManager: CatalogManager) extends RuleExecutor
     Batch("HandleSpecialCommand", Once,
       HandleSpecialCommand),
     Batch("Remove watermark for batch query", Once,
-      EliminateEventTimeWatermark)
+      EliminateEventTimeWatermark),
+    Batch("Inline Join Key Agg", Once, InlineJoinKeyAgg)
   )
 
   /**
@@ -4116,6 +4117,17 @@ object RemoveTempResolvedColumn extends Rule[LogicalPlan] {
         } else {
           t.child
         }
+    }
+  }
+}
+
+object InlineJoinKeyAgg extends Rule[LogicalPlan] {
+  override def apply(plan: LogicalPlan): LogicalPlan = {
+    plan.transformUp {
+      case j @ Join(_, _, _, _, _) =>
+        val newLeft = JoinKeyAgg(j.left)
+        val newRight = JoinKeyAgg(j.right)
+        j.withNewChildren(Seq(newLeft, newRight))
     }
   }
 }

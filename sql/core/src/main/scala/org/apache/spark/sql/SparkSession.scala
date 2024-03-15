@@ -84,7 +84,8 @@ import org.apache.spark.util.ArrayImplicits._
  *                            views, SQL config, UDFs etc) from parent.
  */
 @Stable
-class SparkSession private(
+class
+SparkSession private(
     @transient val sparkContext: SparkContext,
     @transient private val existingSharedState: Option[SharedState],
     @transient private val parentSessionState: Option[SessionState],

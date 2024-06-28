@@ -74,6 +74,10 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
     val unrecognizedEvents = new scala.collection.mutable.HashSet[String]
     val unrecognizedProperties = new scala.collection.mutable.HashSet[String]
 
+    var readTime = 0L
+    var jsonTime = 0L
+    var postTime = 0L
+
     try {
       val lineEntries = lines
         .zipWithIndex
@@ -81,12 +85,20 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
 
       while (lineEntries.hasNext) {
         try {
+          val eS = System.nanoTime()
           val entry = lineEntries.next()
+          readTime += System.nanoTime() - eS
 
           currentLine = entry._1
           lineNumber = entry._2 + 1
 
-          postToAll(JsonProtocol.sparkEventFromJson(currentLine))
+          val jS = System.nanoTime()
+          val json = JsonProtocol.sparkEventFromJson(currentLine)
+          jsonTime += System.nanoTime() - jS
+
+          val pS = System.nanoTime()
+          postToAll(json)
+          postTime += System.nanoTime() - pS
         } catch {
           case e: ClassNotFoundException =>
             // Ignore unknown events, parse through the event log file.
@@ -117,6 +129,11 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
             }
         }
       }
+      // scalastyle:off println
+      println(readTime / 1000 / 1000)
+      println(jsonTime / 1000 / 1000)
+      println(postTime / 1000 / 1000)
+      // scalastyle:on println
       true
     } catch {
       case e: HaltReplayException =>

@@ -1434,6 +1434,17 @@ abstract class FsHistoryProviderSuite extends SparkFunSuite with Matchers with P
     }
   }
 
+  test("perf") {
+    val conf = createTestConf()
+    conf.set(HISTORY_LOG_DIR, "/Users/roreeves/temp/apps")
+    conf.set(LOCAL_STORE_DIR, "/Users/roreeves/temp/leveldb")
+    val provider = new FsHistoryProvider(conf)
+
+    provider.checkForLogs()
+    val ui = provider.getAppUI("application_1718086729746_912714", Some("1"))
+    ui.orNull
+  }
+
   test("compact event log files") {
     def verifyEventLogFiles(
         fs: FileSystem,

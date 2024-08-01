@@ -77,6 +77,7 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
     var readTime = 0L
     var jsonTime = 0L
     var postTime = 0L
+    val startTime = System.nanoTime()
 
     try {
       val lineEntries = lines
@@ -133,6 +134,7 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
       println(s"read time: ${readTime / 1000000000}sec")
       println(s"json time: ${jsonTime / 1000000000}sec" )
       println(s"post time: ${postTime / 1000000000}sec")
+      println(s"total time: ${(System.nanoTime() - startTime) / 1000000000}sec")
       // scalastyle:on println
       true
     } catch {

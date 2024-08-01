@@ -130,9 +130,9 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
         }
       }
       // scalastyle:off println
-      println(readTime / 1000000000)
-      println(jsonTime / 1000000000)
-      println(postTime / 1000000000)
+      println(s"read time: ${readTime / 1000000000}sec")
+      println(s"json time: ${jsonTime / 1000000000}sec" )
+      println(s"post time: ${postTime / 1000000000}sec")
       // scalastyle:on println
       true
     } catch {

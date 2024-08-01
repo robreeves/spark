@@ -1434,8 +1434,22 @@ abstract class FsHistoryProviderSuite extends SparkFunSuite with Matchers with P
     }
   }
 
+  // to solve this use java jbr-17. cant use aarch64 jdk 17.
+  //
+  // An exception or error caused a run to abort: Could not load library.
+  // Reasons: [no leveldbjni64-1.8 in java.library.path:
+  // /Users/roreeves/Library/Java/Extensions:/Library/Java/Extensions:
+  // /Network/Library/Java/Extensions:/System/Library/Java/Extensions:/usr/lib/java:., no leveldbjni-1.8
+  // in java.library.path: /Users/roreeves/Library/Java/Extensions:/Library/Java/Extensions:/Network/Library/Java
+  // /Extensions:/System/Library/Java/Extensions:/usr/lib/java:., no leveldbjni in java.library.path:
+  // /Users/roreeves/Library/Java/Extensions:/Library/Java/Extensions:/Network/Library/Java/Extension
+  // s:/System/Library/Java/Extensions:/usr/lib/java:., Can't load library: /var/folders/qx/38xz8fcs22s6v
+  // scq6sqt4g64000xj7/T/libleveldbjni-64-1-10810432216668174431.8]
   test("perf") {
+    FileUtils.deleteDirectory(new File("/Users/roreeves/temp/leveldb"))
+
     val conf = createTestConf()
+
     conf.set(HISTORY_LOG_DIR, "/Users/roreeves/temp/apps")
     conf.set(LOCAL_STORE_DIR, "/Users/roreeves/temp/leveldb")
     val provider = new FsHistoryProvider(conf)

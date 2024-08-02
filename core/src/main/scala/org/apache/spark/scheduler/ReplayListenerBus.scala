@@ -17,16 +17,17 @@
 
 package org.apache.spark.scheduler
 
-import java.io.{EOFException, IOException, InputStream}
+import java.io.{EOFException, InputStream, IOException}
+
 import scala.io.{Codec, Source}
+
 import com.fasterxml.jackson.core.JsonParseException
 import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException
+
 import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.internal.LogKeys._
 import org.apache.spark.scheduler.ReplayListenerBus._
 import org.apache.spark.util.JsonProtocol
-
-import java.util.concurrent.{Executors, LinkedBlockingQueue, TimeUnit}
 
 /**
  * A SparkListenerBus that can be used to replay events from serialized event data.
@@ -78,38 +79,17 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
     var postTime = 0L
     val startTime = System.nanoTime()
 
-    val queue = new LinkedBlockingQueue[(String, Int)](10)
-    val executorService = Executors.newFixedThreadPool(1)
-    val poisonPill: (String, Int) = ("stop", -1)
-    val endPill: (String, Int) = ("end", -1)
-
-    val eventReader = executorService.submit(() => {
+    try {
       val lineEntries = lines
         .zipWithIndex
         .filter { case (line, _) => eventsFilter(line) }
 
-      try {
-        while (lineEntries.hasNext) {
+      while (lineEntries.hasNext) {
+        try {
           val eS = System.nanoTime()
           val entry = lineEntries.next()
           readTime += System.nanoTime() - eS
 
-          queue.put(entry)
-        }
-        queue.put(endPill)
-      } catch {
-        case e: Exception =>
-          queue.put(poisonPill)
-          throw e
-      }
-
-      true
-    })
-
-    try {
-      var entry: (String, Int) = null
-      while ({entry = queue.poll(5, TimeUnit.SECONDS); entry != poisonPill && entry != endPill}) {
-        try {
           currentLine = entry._1
           lineNumber = entry._2 + 1
 
@@ -141,8 +121,7 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
             // We can only ignore exception from last line of the file that might be truncated
             // the last entry may not be the very last line in the event log, but we treat it
             // as such in a best effort to replay the given input
-            // TODO(roreeves) handle case where queue does not have the endPill yet, but is at the end
-            if (!maybeTruncated || queue.peek() == endPill) {
+            if (!maybeTruncated || lineEntries.hasNext) {
               throw jpe
             } else {
               logWarning(log"Got JsonParseException from log file ${MDC(FILE_NAME, sourceName)}" +
@@ -152,16 +131,11 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
         }
       }
       // scalastyle:off println
-//      println(s"read time: ${readTime / 1000000000}sec")
-//      println(s"json time: ${jsonTime / 1000000000}sec" )
-//      println(s"post time: ${postTime / 1000000000}sec")
+      println(s"read time: ${readTime / 1000000000}sec")
+      println(s"json time: ${jsonTime / 1000000000}sec" )
+      println(s"post time: ${postTime / 1000000000}sec")
       println(s"total time: ${(System.nanoTime() - startTime) / 1000000000}sec")
-
       // scalastyle:on println
-
-      // TODO(roreeves) Signal to reader thread if this thread throws an exception so it will stop reading
-      // TODO(roreeves) Bubble up errors in reader thread
-
       true
     } catch {
       case e: HaltReplayException =>

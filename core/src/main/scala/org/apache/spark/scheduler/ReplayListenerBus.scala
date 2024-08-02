@@ -27,6 +27,7 @@ import org.apache.spark.scheduler.ReplayListenerBus._
 import org.apache.spark.util.JsonProtocol
 
 import java.util.concurrent.{Executors, LinkedBlockingQueue, TimeUnit}
+import scala.util.control.NonFatal
 
 /**
  * A SparkListenerBus that can be used to replay events from serialized event data.
@@ -79,11 +80,11 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
     val startTime = System.nanoTime()
 
     val queue = new LinkedBlockingQueue[(String, Int)](10)
-    val executorService = Executors.newFixedThreadPool(1)
+    val executor = Executors.newFixedThreadPool(1)
     val poisonPill: (String, Int) = ("stop", -1)
     val endPill: (String, Int) = ("end", -1)
 
-    val eventReader = executorService.submit(() => {
+    val eventReader = executor.submit(() => {
       val lineEntries = lines
         .zipWithIndex
         .filter { case (line, _) => eventsFilter(line) }
@@ -174,6 +175,23 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
         logError(log"Exception parsing Spark event log: ${MDC(PATH, sourceName)}", e)
         logError(log"Malformed line #${MDC(LINE_NUM, lineNumber)}: ${MDC(LINE, currentLine)}\n")
         false
+    } finally {
+      executor.shutdown()
+      try {
+        if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
+          executor.shutdownNow()
+          if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
+            println("ExecutorService did not terminate")
+          }
+        }
+      } catch {
+        case _: InterruptedException =>
+          executor.shutdownNow()
+          Thread.currentThread().interrupt()
+        case NonFatal(e) =>
+          println(s"Error during ExecutorService shutdown: ${e.getMessage}")
+          executor.shutdownNow()
+      }
     }
   }
 

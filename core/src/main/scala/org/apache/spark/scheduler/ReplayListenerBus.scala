@@ -74,11 +74,6 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
     val unrecognizedEvents = new scala.collection.mutable.HashSet[String]
     val unrecognizedProperties = new scala.collection.mutable.HashSet[String]
 
-    var readTime = 0L
-    var jsonTime = 0L
-    var postTime = 0L
-    val startTime = System.nanoTime()
-
     val queue = new LinkedBlockingQueue[(String, Int)](10)
     val executor = Executors.newFixedThreadPool(1)
     val poisonPill: (String, Int) = ("stop", -1)
@@ -91,11 +86,7 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
 
       try {
         while (lineEntries.hasNext) {
-          val eS = System.nanoTime()
-          val entry = lineEntries.next()
-          readTime += System.nanoTime() - eS
-
-          queue.put(entry)
+          queue.put(lineEntries.next())
         }
         queue.put(endPill)
       } catch {
@@ -114,13 +105,8 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
           currentLine = entry._1
           lineNumber = entry._2 + 1
 
-          val jS = System.nanoTime()
           val json = JsonProtocol.sparkEventFromJson(currentLine)
-          jsonTime += System.nanoTime() - jS
-
-          val pS = System.nanoTime()
           postToAll(json)
-          postTime += System.nanoTime() - pS
         } catch {
           case e: ClassNotFoundException =>
             // Ignore unknown events, parse through the event log file.
@@ -152,14 +138,6 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
             }
         }
       }
-      // scalastyle:off println
-//      println(s"read time: ${readTime / 1000000000}sec")
-//      println(s"json time: ${jsonTime / 1000000000}sec" )
-//      println(s"post time: ${postTime / 1000000000}sec")
-      println(s"total time: ${(System.nanoTime() - startTime) / 1000000000}sec")
-
-      // scalastyle:on println
-
       // TODO(roreeves) Signal to reader thread if this thread throws an exception so it will stop reading
       // TODO(roreeves) Bubble up errors in reader thread
 

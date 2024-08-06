@@ -17,17 +17,17 @@
 
 package org.apache.spark.scheduler
 
-import java.io.{EOFException, IOException, InputStream}
+import java.io.{EOFException, InputStream, IOException}
+
 import scala.io.{Codec, Source}
+
 import com.fasterxml.jackson.core.JsonParseException
 import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException
+
 import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.internal.LogKeys._
 import org.apache.spark.scheduler.ReplayListenerBus._
 import org.apache.spark.util.JsonProtocol
-
-import java.util.concurrent.{Executors, LinkedBlockingQueue, TimeUnit}
-import scala.util.control.NonFatal
 
 /**
  * A SparkListenerBus that can be used to replay events from serialized event data.
@@ -74,39 +74,19 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
     val unrecognizedEvents = new scala.collection.mutable.HashSet[String]
     val unrecognizedProperties = new scala.collection.mutable.HashSet[String]
 
-    val queue = new LinkedBlockingQueue[(String, Int)](10)
-    val executor = Executors.newFixedThreadPool(1)
-    val poisonPill: (String, Int) = ("stop", -1)
-    val endPill: (String, Int) = ("end", -1)
-
-    val eventReader = executor.submit(() => {
+    try {
       val lineEntries = lines
         .zipWithIndex
         .filter { case (line, _) => eventsFilter(line) }
 
-      try {
-        while (lineEntries.hasNext) {
-          queue.put(lineEntries.next())
-        }
-        queue.put(endPill)
-      } catch {
-        case e: Exception =>
-          queue.put(poisonPill)
-          throw e
-      }
-
-      true
-    })
-
-    try {
-      var entry: (String, Int) = null
-      while ({entry = queue.poll(5, TimeUnit.SECONDS); entry != poisonPill && entry != endPill}) {
+      while (lineEntries.hasNext) {
         try {
+          val entry = lineEntries.next()
+
           currentLine = entry._1
           lineNumber = entry._2 + 1
 
-          val json = JsonProtocol.sparkEventFromJson(currentLine)
-          postToAll(json)
+          postToAll(JsonProtocol.sparkEventFromJson(currentLine))
         } catch {
           case e: ClassNotFoundException =>
             // Ignore unknown events, parse through the event log file.
@@ -128,8 +108,7 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
             // We can only ignore exception from last line of the file that might be truncated
             // the last entry may not be the very last line in the event log, but we treat it
             // as such in a best effort to replay the given input
-            // TODO(roreeves) handle case where queue does not have the endPill yet, but is at the end
-            if (!maybeTruncated || queue.peek() == endPill) {
+            if (!maybeTruncated || lineEntries.hasNext) {
               throw jpe
             } else {
               logWarning(log"Got JsonParseException from log file ${MDC(FILE_NAME, sourceName)}" +
@@ -138,9 +117,6 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
             }
         }
       }
-      // TODO(roreeves) Signal to reader thread if this thread throws an exception so it will stop reading
-      // TODO(roreeves) Bubble up errors in reader thread
-
       true
     } catch {
       case e: HaltReplayException =>
@@ -153,23 +129,6 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
         logError(log"Exception parsing Spark event log: ${MDC(PATH, sourceName)}", e)
         logError(log"Malformed line #${MDC(LINE_NUM, lineNumber)}: ${MDC(LINE, currentLine)}\n")
         false
-    } finally {
-      executor.shutdown()
-      try {
-        if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
-          executor.shutdownNow()
-          if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
-            println("ExecutorService did not terminate")
-          }
-        }
-      } catch {
-        case _: InterruptedException =>
-          executor.shutdownNow()
-          Thread.currentThread().interrupt()
-        case NonFatal(e) =>
-          println(s"Error during ExecutorService shutdown: ${e.getMessage}")
-          executor.shutdownNow()
-      }
     }
   }
 

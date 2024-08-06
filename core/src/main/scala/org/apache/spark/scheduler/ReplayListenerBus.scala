@@ -17,9 +17,12 @@
 
 package org.apache.spark.scheduler
 
-import java.io.{EOFException, InputStream, IOException}
+import java.io.{Closeable, EOFException, InputStream, IOException}
+import java.util.concurrent.{Executors, LinkedBlockingQueue, TimeUnit}
+import java.util.concurrent.atomic.AtomicBoolean
 
 import scala.io.{Codec, Source}
+import scala.util.control.NonFatal
 
 import com.fasterxml.jackson.core.JsonParseException
 import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException
@@ -33,6 +36,60 @@ import org.apache.spark.util.JsonProtocol
  * A SparkListenerBus that can be used to replay events from serialized event data.
  */
 private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
+
+  class AsyncIterator(iterator: Iterator[(String, Int)])
+    extends Iterator[(String, Int)] with Closeable {
+    val queue = new LinkedBlockingQueue[(String, Int)](10)
+    val executor = Executors.newFixedThreadPool(1)
+    val poisonPill: (String, Int) = ("stop", -1)
+    val eofReached = new AtomicBoolean(false)
+
+    val readerThread = executor.submit( new Runnable {
+      override def run(): Unit = {
+        try {
+          while (iterator.hasNext) {
+            queue.put(iterator.next())
+          }
+          eofReached.set(true)
+        } catch {
+          case e: Exception =>
+            queue.put(poisonPill)
+            throw e
+        }
+      }
+    })
+
+    override def hasNext: Boolean = queue.isEmpty && eofReached.get()
+
+    override def next(): (String, Int) = {
+      val next = queue.poll(5, TimeUnit.SECONDS)
+      if (next == poisonPill) {
+        // TODO make sure this throws the original exception
+        readerThread.get()
+      }
+
+      next
+    }
+
+    override def close(): Unit = {
+      executor.shutdown()
+      try {
+        if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
+          executor.shutdownNow()
+          if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
+            println("ExecutorService did not terminate")
+          }
+        }
+      } catch {
+        case _: InterruptedException =>
+          executor.shutdownNow()
+          Thread.currentThread().interrupt()
+        case NonFatal(e) =>
+          println(s"Error during ExecutorService shutdown: ${e.getMessage}")
+          executor.shutdownNow()
+      }
+    }
+  }
 
   /**
    * Replay each event in the order maintained in the given stream. The stream is expected to
@@ -55,9 +112,10 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
       logData: InputStream,
       sourceName: String,
       maybeTruncated: Boolean = false,
-      eventsFilter: ReplayEventsFilter = SELECT_ALL_FILTER): Boolean = {
+      eventsFilter: ReplayEventsFilter = SELECT_ALL_FILTER,
+      useAsyncReader: Boolean = false): Boolean = {
     val lines = Source.fromInputStream(logData)(Codec.UTF8).getLines()
-    replay(lines, sourceName, maybeTruncated, eventsFilter)
+    replay(lines, sourceName, maybeTruncated, eventsFilter, useAsyncReader)
   }
 
   /**
@@ -68,16 +126,23 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
       lines: Iterator[String],
       sourceName: String,
       maybeTruncated: Boolean,
-      eventsFilter: ReplayEventsFilter): Boolean = {
+      eventsFilter: ReplayEventsFilter,
+      useAsyncReader: Boolean): Boolean = {
     var currentLine: String = null
     var lineNumber: Int = 0
     val unrecognizedEvents = new scala.collection.mutable.HashSet[String]
     val unrecognizedProperties = new scala.collection.mutable.HashSet[String]
 
     try {
-      val lineEntries = lines
+      val lineEntriesBase = lines
         .zipWithIndex
         .filter { case (line, _) => eventsFilter(line) }
+
+      val lineEntries = if (useAsyncReader) {
+        new AsyncIterator(lineEntriesBase)
+      } else {
+        lineEntriesBase
+      }
 
       while (lineEntries.hasNext) {
         try {

@@ -17,20 +17,16 @@
 
 package org.apache.spark.scheduler
 
-import java.io.{Closeable, EOFException, InputStream, IOException}
-import java.util.concurrent.{Executors, LinkedBlockingQueue, TimeUnit}
+import java.io.{Closeable, EOFException, IOException, InputStream}
+import java.util.concurrent.{LinkedBlockingQueue, TimeUnit}
 import java.util.concurrent.atomic.AtomicBoolean
-
 import scala.io.{Codec, Source}
-import scala.util.control.NonFatal
-
 import com.fasterxml.jackson.core.JsonParseException
 import com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException
-
 import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.internal.LogKeys._
 import org.apache.spark.scheduler.ReplayListenerBus._
-import org.apache.spark.util.JsonProtocol
+import org.apache.spark.util.{JsonProtocol, ThreadUtils}
 
 /**
  * A SparkListenerBus that can be used to replay events from serialized event data.
@@ -40,7 +36,7 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
   class AsyncIterator(iterator: Iterator[(String, Int)])
     extends Iterator[(String, Int)] with Closeable {
     val queue = new LinkedBlockingQueue[(String, Int)](10)
-    val executor = Executors.newFixedThreadPool(1)
+    val executor = ThreadUtils.sameThreadExecutorService()
     val poisonPill: (String, Int) = ("stop", -1)
     val eofReached = new AtomicBoolean(false)
 
@@ -72,22 +68,7 @@ private[spark] class ReplayListenerBus extends SparkListenerBus with Logging {
     }
 
     override def close(): Unit = {
-      executor.shutdown()
-      try {
-        if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
-          executor.shutdownNow()
-          if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
-            println("ExecutorService did not terminate")
-          }
-        }
-      } catch {
-        case _: InterruptedException =>
-          executor.shutdownNow()
-          Thread.currentThread().interrupt()
-        case NonFatal(e) =>
-          println(s"Error during ExecutorService shutdown: ${e.getMessage}")
-          executor.shutdownNow()
-      }
+      ThreadUtils.shutdown(executor)
     }
   }
 

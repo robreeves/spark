@@ -2320,3 +2320,14 @@ object AsOfJoin {
     }
   }
 }
+
+case class DebugInlineColumnsCount(
+                                    child: LogicalPlan,
+                                    sampleColumns: Seq[Expression],
+                                    maxKeys: Int
+                                  ) extends UnaryNode {
+  override protected def withNewChildInternal(newChild: LogicalPlan): DebugInlineColumnsCount =
+    copy(child = newChild)
+
+  override def output: Seq[Attribute] = child.output
+}

@@ -31,6 +31,7 @@ import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.streaming.{InternalOutputModes, StreamingRelationV2}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
+import org.apache.spark.sql.debug.DebugInlineColumnsCount
 import org.apache.spark.sql.errors.{QueryCompilationErrors, QueryExecutionErrors}
 import org.apache.spark.sql.execution.aggregate.AggUtils
 import org.apache.spark.sql.execution.columnar.{InMemoryRelation, InMemoryTableScanExec}
@@ -1066,6 +1067,14 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
           staticPartitions) :: Nil
       case MultiResult(children) =>
         MultiResultExec(children.map(planLater)) :: Nil
+      case _ => Nil
+    }
+  }
+
+  object DebugOperators extends Strategy {
+    override def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
+      case DebugInlineColumnsCount(child, columns) =>
+        DebugInlineCountExec(planLater(child), columns)
       case _ => Nil
     }
   }

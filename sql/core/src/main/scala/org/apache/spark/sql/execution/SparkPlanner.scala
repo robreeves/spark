@@ -50,7 +50,8 @@ class SparkPlanner(val session: SparkSession, val experimentalMethods: Experimen
       JoinSelection ::
       InMemoryScans ::
       SparkScripts ::
-      BasicOperators :: Nil)
+      BasicOperators ::
+      DebugOperators :: Nil)
 
   /**
    * Override to add extra planning strategies to the planner. These strategies are tried after

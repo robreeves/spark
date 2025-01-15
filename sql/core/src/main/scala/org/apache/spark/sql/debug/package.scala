@@ -17,11 +17,12 @@
 
 package org.apache.spark.sql
 
-import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
+import org.apache.spark.sql.classic.ColumnConversions.toRichColumn
 
 package object debug {
-  case class DebugInlineColumnsCount(child: LogicalPlan, countColumns: Seq[Column])
+  case class DebugInlineColumnsCount(child: LogicalPlan, countColumns: Seq[Expression])
     extends UnaryNode {
 
     override def output: Seq[Attribute] = child.output
@@ -32,7 +33,7 @@ package object debug {
 
   implicit class DebugInlineCount(query: Dataset[_]) {
     def inlineColumnsCount(columns: Column*): Dataset[_] = {
-      val plan = DebugInlineColumnsCount(query.logicalPlan, columns)
+      val plan = DebugInlineColumnsCount(query.logicalPlan, columns.map { _.expr })
       Dataset.ofRows(query.sparkSession, plan)
     }
   }

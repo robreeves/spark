@@ -18,17 +18,16 @@
 package org.apache.spark.sql.execution
 
 import java.util.Collections
-
 import scala.jdk.CollectionConverters._
 import scala.util.control.NonFatal
-
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.expressions.codegen.{ByteCodeStats, CodeFormatter, CodegenContext, CodeGenerator, ExprCode}
+import org.apache.spark.sql.catalyst.expressions.BindReferences.bindReferences
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
+import org.apache.spark.sql.catalyst.expressions.codegen.{ByteCodeStats, CodeFormatter, CodeGenerator, CodegenContext, ExprCode}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.trees.TreeNodeRef
 import org.apache.spark.sql.catalyst.util.StringConcat
@@ -293,6 +292,27 @@ package object debug {
     override def supportsColumnar: Boolean = child.supportsColumnar
 
     override protected def withNewChildInternal(newChild: SparkPlan): DebugExec =
+      copy(child = newChild)
+  }
+
+  case class DebugInlineCountExec(child: SparkPlan, countExprs: Seq[Expression])
+    extends UnaryExecNode {
+
+    override protected def doExecute(): RDD[InternalRow] = {
+      val exprs = bindReferences[Expression](countExprs, child.output)
+
+      child.execute().mapPartitions { iter =>
+        iter.map { row =>
+          // TODO count stats
+
+          row
+        }
+      }
+    }
+
+    override def output: Seq[Attribute] = child.output
+
+    override protected def withNewChildInternal(newChild: SparkPlan): DebugInlineCountExec =
       copy(child = newChild)
   }
 }

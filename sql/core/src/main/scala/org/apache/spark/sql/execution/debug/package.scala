@@ -28,15 +28,21 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.BindReferences.bindReferences
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.expressions.codegen.{ByteCodeStats, CodeFormatter, CodeGenerator, CodegenContext, ExprCode}
+import org.apache.spark.sql.catalyst.json.{JSONOptions, JacksonGenerator}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.trees.TreeNodeRef
-import org.apache.spark.sql.catalyst.util.StringConcat
+import org.apache.spark.sql.catalyst.util.{ArrayData, MapData, StringConcat}
 import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, QueryStageExec}
 import org.apache.spark.sql.execution.streaming.{StreamExecution, StreamingQueryWrapper}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQuery
+import org.apache.spark.sql.types.{ArrayType, DataType, MapType, StructType, VariantType}
 import org.apache.spark.sql.vectorized.ColumnarBatch
-import org.apache.spark.util.{AccumulatorV2, LongAccumulator}
+import org.apache.spark.unsafe.types.VariantVal
+import org.apache.spark.util.sketch.CountMinSketch
+import org.apache.spark.util.{AccumulatorV2, LongAccumulator, Utils}
+
+import java.io.StringWriter
 
 /**
  * Contains methods for debugging query execution.
@@ -298,16 +304,60 @@ package object debug {
   case class DebugInlineCountExec(child: SparkPlan, countExprs: Seq[Expression])
     extends UnaryExecNode {
 
+    private val jsonOptions = new JSONOptions(Map.empty[String, String], "UTC")
+
     override protected def doExecute(): RDD[InternalRow] = {
       val exprs = bindReferences[Expression](countExprs, child.output)
+      // TODO learn more about dimensions
+      // https://redis.io/blog/count-min-sketch-the-art-and-science-of-estimating-stuff/
+      val countMinSketch = CountMinSketch.create(10, 2000, 18)
 
       child.execute().mapPartitions { iter =>
         iter.map { row =>
-          // TODO count stats
+          val exprValue = exprs.map { expr =>
+            valToString(expr.dataType, expr.eval(row))
+          }.mkString(",")
+
+          // TODO can this return byte[] without creating a string?
+          // count min sketch will convert the string back to a byte[]
+          countMinSketch.addString(exprValue)
+
+          // TODO can add return the count to save this step?
+          val count = countMinSketch.estimateCount(exprValue)
+
+          // TODO update top k keys each iteration
+          // Use priority queue. If len(q) < k or q.min < count add
 
           row
         }
       }
+    }
+
+
+    private def valToString(dataType: DataType, value: Any): String = {
+      Option(value).map { v =>
+        dataType match {
+          case _: StructType | _: ArrayType | _: MapType | _: VariantType =>
+            Utils.tryWithResource(new StringWriter()) { writer =>
+              val gen = new JacksonGenerator(dataType, writer, jsonOptions)
+
+              dataType match {
+                case _: StructType =>
+                  gen.write(v.asInstanceOf[InternalRow])
+                case _: ArrayType =>
+                  gen.write(v.asInstanceOf[ArrayData])
+                case _: MapType =>
+                  gen.write(v.asInstanceOf[MapData])
+                case _: VariantType =>
+                  gen.write(v.asInstanceOf[VariantVal])
+              }
+
+              gen.flush()
+              writer.toString
+            }
+          case _ => v.toString
+        }
+      }.orNull
     }
 
     override def output: Seq[Attribute] = child.output

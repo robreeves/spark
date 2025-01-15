@@ -1963,7 +1963,19 @@
   },
   "INDETERMINATE_COLLATION" : {
     "message" : [
-      "Function called requires knowledge of the collation it should apply, but indeterminate collation was found. Use COLLATE function to set the collation explicitly."
+      "Could not determine which collation to use for string operation. Use COLLATE clause to set the collation explicitly."
+    ],
+    "sqlState" : "42P22"
+  },
+  "INDETERMINATE_COLLATION_IN_EXPRESSION" : {
+    "message" : [
+      "Data type of <expr> has indeterminate collation. Use COLLATE clause to set the collation explicitly."
+    ],
+    "sqlState" : "42P22"
+  },
+  "INDETERMINATE_COLLATION_IN_SCHEMA" : {
+    "message" : [
+      "Schema contains indeterminate collation at: [<columnPaths>]. Use COLLATE clause to set the collation explicitly."
     ],
     "sqlState" : "42P22"
   },
@@ -2781,6 +2793,11 @@
       "ITERATE_IN_COMPOUND" : {
         "message" : [
           "ITERATE statement cannot be used with a label that belongs to a compound (BEGIN...END) body."
+        ]
+      },
+      "QUALIFIED_LABEL_NAME" : {
+        "message" : [
+          "Label cannot be qualified."
         ]
       }
     },
@@ -5480,12 +5497,12 @@
         "message" : [
           "Queries from raw JSON/CSV/XML files are disallowed when the",
           "referenced columns only include the internal corrupt record column",
-          "(named _corrupt_record by default). For example:",
-          "spark.read.schema(schema).json(file).filter($\"_corrupt_record\".isNotNull).count()",
-          "and spark.read.schema(schema).json(file).select(\"_corrupt_record\").show().",
+          "(named `_corrupt_record` by default). For example:",
+          "`spark.read.schema(schema).json(file).filter($\"_corrupt_record\".isNotNull).count()`",
+          "and `spark.read.schema(schema).json(file).select(\"_corrupt_record\").show()`.",
           "Instead, you can cache or save the parsed results and then send the same query.",
-          "For example, val df = spark.read.schema(schema).json(file).cache() and then",
-          "df.filter($\"_corrupt_record\".isNotNull).count()."
+          "For example, `val df = spark.read.schema(schema).json(file).cache()` and then",
+          "`df.filter($\"_corrupt_record\".isNotNull).count()`."
         ]
       },
       "REMOVE_NAMESPACE_COMMENT" : {

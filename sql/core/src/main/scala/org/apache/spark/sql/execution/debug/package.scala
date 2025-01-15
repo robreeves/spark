@@ -17,18 +17,22 @@
 
 package org.apache.spark.sql.execution
 
+import java.io.StringWriter
 import java.util.Collections
+
+import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 import scala.util.control.NonFatal
+
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.BindReferences.bindReferences
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
-import org.apache.spark.sql.catalyst.expressions.codegen.{ByteCodeStats, CodeFormatter, CodeGenerator, CodegenContext, ExprCode}
-import org.apache.spark.sql.catalyst.json.{JSONOptions, JacksonGenerator}
+import org.apache.spark.sql.catalyst.expressions.BindReferences.bindReferences
+import org.apache.spark.sql.catalyst.expressions.codegen.{ByteCodeStats, CodeFormatter, CodegenContext, CodeGenerator, ExprCode}
+import org.apache.spark.sql.catalyst.json.{JacksonGenerator, JSONOptions}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.trees.TreeNodeRef
 import org.apache.spark.sql.catalyst.util.{ArrayData, MapData, StringConcat}
@@ -39,10 +43,8 @@ import org.apache.spark.sql.streaming.StreamingQuery
 import org.apache.spark.sql.types.{ArrayType, DataType, MapType, StructType, VariantType}
 import org.apache.spark.sql.vectorized.ColumnarBatch
 import org.apache.spark.unsafe.types.VariantVal
-import org.apache.spark.util.sketch.CountMinSketch
 import org.apache.spark.util.{AccumulatorV2, LongAccumulator, Utils}
-
-import java.io.StringWriter
+import org.apache.spark.util.sketch.CountMinSketch
 
 /**
  * Contains methods for debugging query execution.
@@ -312,27 +314,55 @@ package object debug {
       // https://redis.io/blog/count-min-sketch-the-art-and-science-of-estimating-stuff/
       val countMinSketch = CountMinSketch.create(10, 2000, 18)
 
+      val topK = mutable.HashMap[String, Long]()
+      var minTopK = -1L
+      val k = 5
+
       child.execute().mapPartitions { iter =>
-        iter.map { row =>
-          val exprValue = exprs.map { expr =>
-            valToString(expr.dataType, expr.eval(row))
-          }.mkString(",")
+          iter.map { row =>
+            val exprValue = exprs.map { expr =>
+              valToString(expr.dataType, expr.eval(row))
+            }.mkString(",")
 
-          // TODO can this return byte[] without creating a string?
-          // count min sketch will convert the string back to a byte[]
-          countMinSketch.addString(exprValue)
+            // TODO can this return byte[] without creating a string?
+            // count min sketch will convert the string back to a byte[]
+            countMinSketch.addString(exprValue)
 
-          // TODO can add return the count to save this step?
-          val count = countMinSketch.estimateCount(exprValue)
+            // TODO can add return the count to save this step?
+            val count = countMinSketch.estimateCount(exprValue)
 
-          // TODO update top k keys each iteration
-          // Use priority queue. If len(q) < k or q.min < count add
+            // Update top K
+            if (count > minTopK) {
+              topK.put(exprValue, count)
+            }
+            if (topK.size > k) {
+              // This is a new element. Remove the old minimum element.
+              var newMin = Long.MaxValue
+              for ((value, count) <- topK) {
+                if (count <= minTopK) {
+                  topK.remove(value)
+                } else {
+                  newMin = math.min(newMin, count)
+                }
+              }
 
-          row
+              minTopK = newMin
+            }
+
+            // TODO Publish anything in top K greater
+            // than N% of total count so only skew keys are shown
+            // to accumulator
+            topK.foreach { case (value, count) =>
+              val threshold = countMinSketch.totalCount() / 100
+              if (count >= threshold) {
+                logWarning(s"Top K: $value=$count")
+              }
+            }
+
+            row
+          }
         }
       }
-    }
-
 
     private def valToString(dataType: DataType, value: Any): String = {
       Option(value).map { v =>

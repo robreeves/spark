@@ -352,12 +352,19 @@ package object debug {
             // TODO Publish anything in top K greater
             // than N% of total count so only skew keys are shown
             // to accumulator
-            topK.foreach { case (value, count) =>
-              val threshold = countMinSketch.totalCount() / 100
-              if (count >= threshold) {
-                logWarning(s"Top K: $value=$count")
+            val totalCount = countMinSketch.totalCount()
+            val threshold = totalCount / 100
+            logWarning(s"threshold=$threshold, count=$totalCount")
+            if (threshold > 0) {
+              topK.foreach { case (value, count) =>
+                val threshold = countMinSketch.totalCount() / 100
+                logWarning(s"threshold=$threshold, count=$count")
+                if (count >= threshold) {
+                  logWarning(s"Top K: $value=$count")
+                }
               }
             }
+            logWarning("done")
 
             row
           }

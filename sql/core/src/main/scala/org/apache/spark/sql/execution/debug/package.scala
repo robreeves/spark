@@ -19,11 +19,9 @@ package org.apache.spark.sql.execution
 
 import java.io.StringWriter
 import java.util.Collections
-
 import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 import scala.util.control.NonFatal
-
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
@@ -31,8 +29,8 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.expressions.BindReferences.bindReferences
-import org.apache.spark.sql.catalyst.expressions.codegen.{ByteCodeStats, CodeFormatter, CodegenContext, CodeGenerator, ExprCode}
-import org.apache.spark.sql.catalyst.json.{JacksonGenerator, JSONOptions}
+import org.apache.spark.sql.catalyst.expressions.codegen.{ByteCodeStats, CodeFormatter, CodeGenerator, CodegenContext, ExprCode}
+import org.apache.spark.sql.catalyst.json.{JSONOptions, JacksonGenerator}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.trees.TreeNodeRef
 import org.apache.spark.sql.catalyst.util.{ArrayData, MapData, StringConcat}
@@ -308,6 +306,11 @@ package object debug {
 
     private val jsonOptions = new JSONOptions(Map.empty[String, String], "UTC")
 
+    private val accumulator = new TopKAccumulator(5)
+    accumulator.register(
+      session.sparkContext,
+      Some(s"${child.nodeName} top values for ${countExprs.mkString(",")}"))
+
     override protected def doExecute(): RDD[InternalRow] = {
       val exprs = bindReferences[Expression](countExprs, child.output)
       // TODO learn more about dimensions
@@ -331,40 +334,35 @@ package object debug {
             // TODO can add return the count to save this step?
             val count = countMinSketch.estimateCount(exprValue)
 
-            // Update top K
-            if (count > minTopK) {
-              topK.put(exprValue, count)
-            }
-            if (topK.size > k) {
-              // This is a new element. Remove the old minimum element.
-              var newMin = Long.MaxValue
-              for ((value, count) <- topK) {
-                if (count <= minTopK) {
-                  topK.remove(value)
-                } else {
-                  newMin = math.min(newMin, count)
-                }
-              }
+            accumulator.add((exprValue, count))
 
-              minTopK = newMin
-            }
+//            // Update top K
+//            if (count > minTopK) {
+//              topK.put(exprValue, count)
+//            }
+//            if (topK.size > k) {
+//              // This is a new element. Remove the old minimum element.
+//              var newMin = Long.MaxValue
+//              for ((value, count) <- topK) {
+//                if (count <= minTopK) {
+//                  topK.remove(value)
+//                } else {
+//                  newMin = math.min(newMin, count)
+//                }
+//              }
+//
+//              minTopK = newMin
+//            }
 
             // TODO Publish anything in top K greater
             // than N% of total count so only skew keys are shown
             // to accumulator
             val totalCount = countMinSketch.totalCount()
             val threshold = totalCount / 100
-            logWarning(s"threshold=$threshold, count=$totalCount")
-            if (threshold > 0) {
-              topK.foreach { case (value, count) =>
-                val threshold = countMinSketch.totalCount() / 100
-                logWarning(s"threshold=$threshold, count=$count")
-                if (count >= threshold) {
-                  logWarning(s"Top K: $value=$count")
-                }
-              }
+            // logWarning(s"threshold=$threshold, count=$totalCount")
+            if (threshold > 0 && count > threshold) {
+              accumulator.add((exprValue, count))
             }
-            logWarning("done")
 
             row
           }
@@ -401,5 +399,70 @@ package object debug {
 
     override protected def withNewChildInternal(newChild: SparkPlan): DebugInlineCountExec =
       copy(child = newChild)
+  }
+
+  class TopKAccumulator(k: Int) extends AccumulatorV2[(String, Long), Map[String, Long]] {
+    private val topK = new mutable.HashMap[String, Long]()
+    private var currentMinCount = Long.MinValue
+
+    def this(k: Int, topK: mutable.HashMap[String, Long], currentMinCount: Long) = {
+      this(k)
+      this.topK.addAll(topK)
+      this.currentMinCount = currentMinCount
+    }
+
+    override def isZero: Boolean = synchronized { topK.isEmpty }
+
+    override def copy(): AccumulatorV2[(String, Long), Map[String, Long]] =
+      new TopKAccumulator(k, topK, currentMinCount)
+
+    override def reset(): Unit = synchronized { topK.clear() }
+
+    override def add(v: (String, Long)): Unit = synchronized {
+      val value = v._1
+      val count = v._2
+
+      // Add the value if it is bigger than the current minimum or
+      // there are not k elements yet
+      if (count > currentMinCount || topK.size < k) {
+        topK.put(value, count)
+
+        pruneTopK()
+      }
+    }
+
+    private def pruneTopK(): Unit = {
+      if (topK.size > k) {
+        var newMin = Long.MaxValue
+
+        for ((value, count) <- topK) {
+          if (count <= currentMinCount) {
+            topK.remove(value)
+          } else {
+            newMin = math.min(newMin, count)
+          }
+        }
+
+        currentMinCount = newMin
+      }
+    }
+
+    // TODO the add/merge feels messy. Something better can be done.
+    override def merge(
+      other: AccumulatorV2[(String, Long), Map[String, Long]]
+    ): Unit = synchronized {
+      // add all items
+      other.value.foreach { case (value, count) =>
+        val currCount = topK.getOrElse(value, 0L)
+        topK.put(value, count + currCount)
+      }
+
+      // recompute the minimum
+      currentMinCount = topK.values.min
+
+      pruneTopK()
+    }
+
+    override def value: Map[String, Long] = synchronized { topK.toMap }
   }
 }

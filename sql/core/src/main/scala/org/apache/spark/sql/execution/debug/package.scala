@@ -339,7 +339,7 @@ package object debug {
       val seed = 18
       val countMinSketch = CountMinSketch.create(depth, width, seed)
 
-      val exprs = bindReferences[Expression](exprs, child.output)
+      val exprs = bindReferences[Expression](exprsToCount, child.output)
 
       child.execute().mapPartitions { iter =>
           iter.map { row =>
@@ -402,19 +402,17 @@ package object debug {
    * @param k The number of values to keep in descending order by count.
    */
   class TopKAccumulator(k: Int) extends AccumulatorV2[(String, Long), Map[String, Long]] {
-    private val topK = new mutable.HashMap[String, Long]()
-    private var currentMinCount = Long.MinValue
+    private val topK = new mutable.TreeMap[String, Long]()
 
-    def this(k: Int, topK: mutable.HashMap[String, Long], currentMinCount: Long) = {
+    def this(k: Int, topK: mutable.TreeMap[String, Long]) = {
       this(k)
       this.topK.addAll(topK)
-      this.currentMinCount = currentMinCount
     }
 
     override def isZero: Boolean = synchronized { topK.isEmpty }
 
     override def copy(): AccumulatorV2[(String, Long), Map[String, Long]] =
-      new TopKAccumulator(k, topK, currentMinCount)
+      new TopKAccumulator(k, topK)
 
     override def reset(): Unit = synchronized { topK.clear() }
 
@@ -422,45 +420,19 @@ package object debug {
       val value = v._1
       val count = v._2
 
-      // Add the value if it is bigger than the current minimum or
-      // there are not k elements yet
-      if (count > currentMinCount || topK.size < k) {
-        topK.put(value, count)
-
-        pruneTopK()
-      }
-    }
-
-    private def pruneTopK(): Unit = {
+      topK.put(value, count)
       if (topK.size > k) {
-        var newMin = Long.MaxValue
-
-        for ((value, count) <- topK) {
-          if (count <= currentMinCount) {
-            topK.remove(value)
-          } else {
-            newMin = math.min(newMin, count)
-          }
-        }
-
-        currentMinCount = newMin
+        topK.headOption.foreach { case(value, _) => topK.remove(value) }
       }
     }
 
-    // TODO the add/merge feels messy. Something better can be done.
     override def merge(
       other: AccumulatorV2[(String, Long), Map[String, Long]]
     ): Unit = synchronized {
-      // add all items
       other.value.foreach { case (value, count) =>
         val currCount = topK.getOrElse(value, 0L)
-        topK.put(value, count + currCount)
+        add((value, count + currCount))
       }
-
-      // recompute the minimum
-      currentMinCount = topK.values.min
-
-      pruneTopK()
     }
 
     override def value: Map[String, Long] = synchronized { topK.toMap }

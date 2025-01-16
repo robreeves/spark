@@ -18,7 +18,9 @@
 package org.apache.spark.sql
 
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
+import org.apache.spark.sql.catalyst.planning.ExtractEquiJoinKeys
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
+import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.classic.ColumnConversions.toRichColumn
 
 package object debug {
@@ -29,6 +31,26 @@ package object debug {
 
     override protected def withNewChildInternal(
       newChild: LogicalPlan): InlineApproxCount = copy(child = newChild)
+  }
+
+  object InlineApproxCountInference extends Rule[LogicalPlan] {
+    override def apply(plan: LogicalPlan): LogicalPlan = {
+      plan.transformUp {
+        case j @ ExtractEquiJoinKeys(_, leftKeys, rightKeys, _, _, _, _, _) =>
+          val left = wrapJoinInput(j.left, leftKeys)
+          val right = wrapJoinInput(j.right, rightKeys)
+
+          j.withNewChildren(Seq(left, right))
+      }
+    }
+
+    private def wrapJoinInput(
+      plan: LogicalPlan,
+      sampleKeys: Seq[Expression]) = plan match {
+        // TODO do we need this case? It means a user explicitly added it
+        // case d: InlineApproxCount => d
+        case _ => InlineApproxCount(plan, sampleKeys)
+    }
   }
 
   implicit class Debug(query: Dataset[_]) {

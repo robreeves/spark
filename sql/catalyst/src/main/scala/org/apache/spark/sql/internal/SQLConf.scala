@@ -5483,6 +5483,12 @@ object SQLConf {
     .booleanConf
     .createWithDefault(true)
 
+  val DEBUG_COUNT_JOIN_KEYS_ENABLED = buildConf("spark.sql.debug.countJoinKeys")
+    .doc("TODO")
+    .version("4.0.0")
+    .booleanConf
+    .createWithDefault(false)
+
   /**
    * Holds information about keys that have been deprecated.
    *
@@ -6479,6 +6485,8 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def legacyCodingErrorAction: Boolean = getConf(SQLConf.LEGACY_CODING_ERROR_ACTION)
 
   def legacyEvalCurrentTime: Boolean = getConf(SQLConf.LEGACY_EVAL_CURRENT_TIME)
+
+  def debugCountJoinKeysEnabled: Boolean = getConf(SQLConf.DEBUG_COUNT_JOIN_KEYS_ENABLED)
 
   /** ********************** SQLConf functionality methods ************ */
 

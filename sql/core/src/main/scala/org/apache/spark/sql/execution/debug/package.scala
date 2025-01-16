@@ -301,7 +301,18 @@ package object debug {
       copy(child = newChild)
   }
 
-  case class DebugInlineCountExec(child: SparkPlan, countExprs: Seq[Expression])
+  /**
+   * Estimates the count of each unique value produced by a sequence of expressions.
+   * The top k counts will be published to an accumulator. This is useful for debugging tasks like
+   * identify where skew is coming from in a transformation.
+   *
+   * The count is an approximation using count-min sketch to minimze the amount of memory needed.
+   * @param child The child query that the count will be applied to.
+   * @param countExprs The expressions to count. Each expression is evaluated then the results are
+   *                   concatenated to create the unique value to be counted.
+   * @param k The number of values to publish to the accumulator, in descending order by count.
+   */
+  case class InlineApproxCountExec(child: SparkPlan, countExprs: Seq[Expression], k: Int = 5)
     extends UnaryExecNode {
 
     private val jsonOptions = new JSONOptions(Map.empty[String, String], "UTC")
@@ -376,10 +387,14 @@ package object debug {
 
     override def output: Seq[Attribute] = child.output
 
-    override protected def withNewChildInternal(newChild: SparkPlan): DebugInlineCountExec =
+    override protected def withNewChildInternal(newChild: SparkPlan): InlineApproxCountExec =
       copy(child = newChild)
   }
 
+  /**
+   * Maintains a collection of the top K values by count
+   * @param k The number of values to keep in descending order by count.
+   */
   class TopKAccumulator(k: Int) extends AccumulatorV2[(String, Long), Map[String, Long]] {
     private val topK = new mutable.HashMap[String, Long]()
     private var currentMinCount = Long.MinValue

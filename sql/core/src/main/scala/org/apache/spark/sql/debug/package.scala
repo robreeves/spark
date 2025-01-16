@@ -22,18 +22,18 @@ import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.classic.ColumnConversions.toRichColumn
 
 package object debug {
-  case class DebugInlineCount(child: LogicalPlan, columns: Seq[Expression])
+  case class InlineApproxCount(child: LogicalPlan, columns: Seq[Expression])
     extends UnaryNode {
 
     override def output: Seq[Attribute] = child.output
 
     override protected def withNewChildInternal(
-      newChild: LogicalPlan): DebugInlineCount = copy(child = newChild)
+      newChild: LogicalPlan): InlineApproxCount = copy(child = newChild)
   }
 
   implicit class Debug(query: Dataset[_]) {
-    def inlineCount(columns: Column*): Dataset[_] = {
-      val plan = DebugInlineCount(query.logicalPlan, columns.map { _.expr })
+    def inlineApproxCount(columns: Column*): Dataset[_] = {
+      val plan = InlineApproxCount(query.logicalPlan, columns.map { _.expr })
       Dataset.ofRows(query.sparkSession, plan)
     }
   }

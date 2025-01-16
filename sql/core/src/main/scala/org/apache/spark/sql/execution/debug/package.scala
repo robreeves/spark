@@ -404,9 +404,9 @@ package object debug {
    * @param k The number of values to keep in descending order by count.
    */
   class TopKAccumulator(k: Int) extends AccumulatorV2[(String, Long), Map[String, Long]] {
-    private val topK = new mutable.TreeMap[String, Long]()
+    private val topK = new mutable.HashMap[String, Long]()
 
-    def this(k: Int, topK: mutable.TreeMap[String, Long]) = {
+    def this(k: Int, topK: mutable.HashMap[String, Long]) = {
       this(k)
       this.topK.addAll(topK)
     }
@@ -424,7 +424,10 @@ package object debug {
 
       topK.put(value, count)
       if (topK.size > k) {
-        topK.headOption.foreach { case(value, _) => topK.remove(value) }
+        // TODO needs to be more efficient
+        // Remove minimum value
+        val min = topK.toSeq.sortBy(_._2).headOption
+        min.foreach { case (key, _) => topK.remove(key) }
       }
     }
 

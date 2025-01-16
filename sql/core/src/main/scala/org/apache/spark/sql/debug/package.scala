@@ -35,7 +35,7 @@ package object debug {
 
   object InlineApproxCountInference extends Rule[LogicalPlan] {
     override def apply(plan: LogicalPlan): LogicalPlan = {
-      plan.transformUp {
+      plan.transform {
         case j @ ExtractEquiJoinKeys(_, leftKeys, rightKeys, _, _, _, _, _) =>
           val left = wrapJoinInput(j.left, leftKeys)
           val right = wrapJoinInput(j.right, rightKeys)
@@ -47,8 +47,7 @@ package object debug {
     private def wrapJoinInput(
       plan: LogicalPlan,
       sampleKeys: Seq[Expression]) = plan match {
-        // TODO do we need this case? It means a user explicitly added it
-        // case d: InlineApproxCount => d
+        case d: InlineApproxCount => d
         case _ => InlineApproxCount(plan, sampleKeys)
     }
   }

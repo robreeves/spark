@@ -317,10 +317,6 @@ package object debug {
       // https://redis.io/blog/count-min-sketch-the-art-and-science-of-estimating-stuff/
       val countMinSketch = CountMinSketch.create(10, 2000, 18)
 
-      val topK = mutable.HashMap[String, Long]()
-      var minTopK = -1L
-      val k = 5
-
       child.execute().mapPartitions { iter =>
           iter.map { row =>
             val exprValue = exprs.map { expr =>
@@ -336,27 +332,10 @@ package object debug {
 
             accumulator.add((exprValue, count))
 
-//            // Update top K
-//            if (count > minTopK) {
-//              topK.put(exprValue, count)
-//            }
-//            if (topK.size > k) {
-//              // This is a new element. Remove the old minimum element.
-//              var newMin = Long.MaxValue
-//              for ((value, count) <- topK) {
-//                if (count <= minTopK) {
-//                  topK.remove(value)
-//                } else {
-//                  newMin = math.min(newMin, count)
-//                }
-//              }
-//
-//              minTopK = newMin
-//            }
-
-            // TODO Publish anything in top K greater
-            // than N% of total count so only skew keys are shown
-            // to accumulator
+            // Only publish the values above a threshold because this is
+            // used to identify skew
+            // TODO should we remove this and let the accumulator manage the top k. The top results will still be
+            // shown in the merged accumulator.
             val totalCount = countMinSketch.totalCount()
             val threshold = totalCount / 100
             // logWarning(s"threshold=$threshold, count=$totalCount")

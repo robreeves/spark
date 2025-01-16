@@ -308,50 +308,56 @@ package object debug {
    *
    * The count is an approximation using count-min sketch to minimze the amount of memory needed.
    * @param child The child query that the count will be applied to.
-   * @param countExprs The expressions to count. Each expression is evaluated then the results are
+   * @param exprsToCount The expressions to count. Each expression is evaluated then the results are
    *                   concatenated to create the unique value to be counted.
    * @param k The number of values to publish to the accumulator, in descending order by count.
+   * @param thresholdFraction This defines the fraction of the total count in the partition a
+   *                          value must have before it is published to the accumulator.
+   *                          The purpose of this is to reduce noise and make it easier to
+   *                          find the most common values. The value must be between 0 and 1.
    */
-  case class InlineApproxCountExec(child: SparkPlan, countExprs: Seq[Expression], k: Int = 5)
-    extends UnaryExecNode {
+  case class InlineApproxCountExec(
+    child: SparkPlan, exprsToCount: Seq[Expression], k: Int = 5, thresholdFraction: Float = 0.01F
+  ) extends UnaryExecNode {
+    require(thresholdFraction >= 0 && thresholdFraction <= 1,
+      "thresholdFraction must be between 0 and 1")
 
     private val jsonOptions = new JSONOptions(Map.empty[String, String], "UTC")
 
     private val accumulator = new TopKAccumulator(5)
     accumulator.register(
       session.sparkContext,
-      Some(s"${child.nodeName} top values for ${countExprs.mkString(",")}"))
+      Some(s"Most common values for query '${child.nodeName}' " +
+        s"and expressions '${exprsToCount.mkString(",")}'"))
 
     override protected def doExecute(): RDD[InternalRow] = {
-      val exprs = bindReferences[Expression](countExprs, child.output)
-      // TODO learn more about dimensions
-      // https://redis.io/blog/count-min-sketch-the-art-and-science-of-estimating-stuff/
-      val countMinSketch = CountMinSketch.create(10, 2000, 18)
+      // The count-min sketch values are hard-coded to keep it simple. A depth of 10 and
+      // width of 2000 has a sufficiently low error rate that it will not impact the ability
+      // to surface the most common values.
+      val depth = 10 // Depth is the number of unique hashes to compute for each value
+      val width = 2000 // Width is the number of buckets to divide the data into
+      val seed = 18
+      val countMinSketch = CountMinSketch.create(depth, width, seed)
+
+      val exprs = bindReferences[Expression](exprs, child.output)
 
       child.execute().mapPartitions { iter =>
           iter.map { row =>
-            val exprValue = exprs.map { expr =>
+            val exprsValue = exprs.map { expr =>
               valToString(expr.dataType, expr.eval(row))
             }.mkString(",")
 
             // TODO can this return byte[] without creating a string?
             // count min sketch will convert the string back to a byte[]
-            countMinSketch.addString(exprValue)
-
+            countMinSketch.addString(exprsValue)
             // TODO can add return the count to save this step?
-            val count = countMinSketch.estimateCount(exprValue)
+            val count = countMinSketch.estimateCount(exprsValue)
 
-            accumulator.add((exprValue, count))
-
-            // Only publish the values above a threshold because this is
-            // used to identify skew
-            // TODO should we remove this and let the accumulator manage the top k. The top results will still be
-            // shown in the merged accumulator.
-            val totalCount = countMinSketch.totalCount()
-            val threshold = totalCount / 100
-            // logWarning(s"threshold=$threshold, count=$totalCount")
+            val threshold = (countMinSketch.totalCount() * thresholdFraction).asInstanceOf[Long]
+            // The check if the threshold is greater than 0 is to prevent noise publishing
+            // counts when only the first few elements of the iterator have been processed
             if (threshold > 0 && count > threshold) {
-              accumulator.add((exprValue, count))
+              accumulator.add((exprsValue, count))
             }
 
             row

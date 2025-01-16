@@ -353,12 +353,14 @@ package object debug {
             // TODO can add return the count to save this step?
             val count = countMinSketch.estimateCount(exprsValue)
 
-            val threshold = (countMinSketch.totalCount() * thresholdFraction).asInstanceOf[Long]
-            // The check if the threshold is greater than 0 is to prevent noise publishing
-            // counts when only the first few elements of the iterator have been processed
-            if (threshold > 0 && count > threshold) {
-              accumulator.add((exprsValue, count))
-            }
+            accumulator.add((exprsValue, count))
+
+//            val threshold = (countMinSketch.totalCount() * thresholdFraction).asInstanceOf[Long]
+//            // The check if the threshold is greater than 0 is to prevent noise publishing
+//            // counts when only the first few elements of the iterator have been processed
+//            if (threshold > 0 && count > threshold) {
+//              accumulator.add((exprsValue, count))
+//            }
 
             row
           }

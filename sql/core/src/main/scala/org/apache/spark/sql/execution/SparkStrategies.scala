@@ -18,10 +18,9 @@
 package org.apache.spark.sql.execution
 
 import java.util.Locale
-
 import org.apache.spark.{SparkException, SparkUnsupportedOperationException}
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{execution, AnalysisException, Strategy}
+import org.apache.spark.sql.{AnalysisException, Strategy, execution}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions._
@@ -31,11 +30,13 @@ import org.apache.spark.sql.catalyst.plans._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.streaming.{InternalOutputModes, StreamingRelationV2}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
+import org.apache.spark.sql.debug.InlineApproxCount
 import org.apache.spark.sql.errors.{QueryCompilationErrors, QueryExecutionErrors}
 import org.apache.spark.sql.execution.aggregate.AggUtils
 import org.apache.spark.sql.execution.columnar.{InMemoryRelation, InMemoryTableScanExec}
 import org.apache.spark.sql.execution.command._
 import org.apache.spark.sql.execution.datasources.{WriteFiles, WriteFilesExec}
+import org.apache.spark.sql.execution.debug.InlineApproxCountExec
 import org.apache.spark.sql.execution.exchange.{REBALANCE_PARTITIONS_BY_COL, REBALANCE_PARTITIONS_BY_NONE, REPARTITION_BY_COL, REPARTITION_BY_NUM, ShuffleExchangeExec}
 import org.apache.spark.sql.execution.python._
 import org.apache.spark.sql.execution.streaming._
@@ -1066,6 +1067,14 @@ abstract class SparkStrategies extends QueryPlanner[SparkPlan] {
           staticPartitions) :: Nil
       case MultiResult(children) =>
         MultiResultExec(children.map(planLater)) :: Nil
+      case _ => Nil
+    }
+  }
+
+  object DebugOperators extends Strategy {
+    override def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
+      case InlineApproxCount(child, columns) =>
+        InlineApproxCountExec(planLater(child), columns) :: Nil
       case _ => Nil
     }
   }

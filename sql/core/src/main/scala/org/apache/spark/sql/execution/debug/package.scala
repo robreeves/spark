@@ -17,27 +17,32 @@
 
 package org.apache.spark.sql.execution
 
+import java.io.StringWriter
 import java.util.Collections
-
+import scala.collection.mutable
 import scala.jdk.CollectionConverters._
 import scala.util.control.NonFatal
-
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.expressions.Attribute
-import org.apache.spark.sql.catalyst.expressions.codegen.{ByteCodeStats, CodeFormatter, CodegenContext, CodeGenerator, ExprCode}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
+import org.apache.spark.sql.catalyst.expressions.BindReferences.bindReferences
+import org.apache.spark.sql.catalyst.expressions.codegen.{ByteCodeStats, CodeFormatter, CodeGenerator, CodegenContext, ExprCode}
+import org.apache.spark.sql.catalyst.json.{JSONOptions, JacksonGenerator}
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
 import org.apache.spark.sql.catalyst.trees.TreeNodeRef
-import org.apache.spark.sql.catalyst.util.StringConcat
+import org.apache.spark.sql.catalyst.util.{ArrayData, MapData, StringConcat}
 import org.apache.spark.sql.execution.adaptive.{AdaptiveSparkPlanExec, QueryStageExec}
 import org.apache.spark.sql.execution.streaming.{StreamExecution, StreamingQueryWrapper}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQuery
+import org.apache.spark.sql.types.{ArrayType, DataType, MapType, StructType, VariantType}
 import org.apache.spark.sql.vectorized.ColumnarBatch
-import org.apache.spark.util.{AccumulatorV2, LongAccumulator}
+import org.apache.spark.unsafe.types.VariantVal
+import org.apache.spark.util.{AccumulatorV2, LongAccumulator, Utils}
+import org.apache.spark.util.sketch.CountMinSketch
 
 /**
  * Contains methods for debugging query execution.
@@ -294,5 +299,145 @@ package object debug {
 
     override protected def withNewChildInternal(newChild: SparkPlan): DebugExec =
       copy(child = newChild)
+  }
+
+  /**
+   * Estimates the count of each unique value produced by a sequence of expressions.
+   * The top k counts will be published to an accumulator. This is useful for debugging tasks like
+   * identify where skew is coming from in a transformation.
+   *
+   * The count is an approximation using count-min sketch to minimze the amount of memory needed.
+   * @param child The child query that the count will be applied to.
+   * @param exprsToCount The expressions to count. Each expression is evaluated then the results are
+   *                   concatenated to create the unique value to be counted.
+   * @param k The number of values to publish to the accumulator, in descending order by count.
+   * @param thresholdFraction This defines the fraction of the total count in the partition a
+   *                          value must have before it is published to the accumulator.
+   *                          The purpose of this is to reduce noise and make it easier to
+   *                          find the most common values. The value must be between 0 and 1.
+   */
+  case class InlineApproxCountExec(
+    child: SparkPlan, exprsToCount: Seq[Expression], k: Int = 5, thresholdFraction: Float = 0.01F
+  ) extends UnaryExecNode {
+    require(thresholdFraction >= 0 && thresholdFraction <= 1,
+      "thresholdFraction must be between 0 and 1")
+
+    private val jsonOptions = new JSONOptions(Map.empty[String, String], "UTC")
+
+    private val accumulator = new TopKAccumulator(5)
+    accumulator.register(
+      session.sparkContext,
+      Some(s"Most common values for query '${child.nodeName}' " +
+        s"and expressions '${exprsToCount.mkString(",")}'"))
+
+    override protected def doExecute(): RDD[InternalRow] = {
+      // The count-min sketch values are hard-coded to keep it simple. A depth of 10 and
+      // width of 2000 has a sufficiently low error rate that it will not impact the ability
+      // to surface the most common values.
+      val depth = 10 // Depth is the number of unique hashes to compute for each value
+      val width = 2000 // Width is the number of buckets to divide the data into
+      val seed = 18
+      val countMinSketch = CountMinSketch.create(depth, width, seed)
+
+      val exprs = bindReferences[Expression](exprsToCount, child.output)
+
+      child.execute().mapPartitions { iter =>
+          iter.map { row =>
+            val exprsValue = exprs.map { expr =>
+              valToString(expr.dataType, expr.eval(row))
+            }.mkString(",")
+
+            // TODO can this return byte[] without creating a string?
+            // count min sketch will convert the string back to a byte[]
+            countMinSketch.addString(exprsValue)
+            // TODO can add return the count to save this step?
+            val count = countMinSketch.estimateCount(exprsValue)
+
+            val threshold = (countMinSketch.totalCount() * thresholdFraction).asInstanceOf[Long]
+            // The check if the threshold is greater than 0 is to prevent noise publishing
+            // counts when only the first few elements of the iterator have been processed
+            if (threshold > 0 && count > threshold) {
+              accumulator.add((exprsValue, count))
+            }
+
+            row
+          }
+        }
+      }
+
+    private def valToString(dataType: DataType, value: Any): String = {
+      Option(value).map { v =>
+        dataType match {
+          case _: StructType | _: ArrayType | _: MapType | _: VariantType =>
+            Utils.tryWithResource(new StringWriter()) { writer =>
+              val gen = new JacksonGenerator(dataType, writer, jsonOptions)
+
+              dataType match {
+                case _: StructType =>
+                  gen.write(v.asInstanceOf[InternalRow])
+                case _: ArrayType =>
+                  gen.write(v.asInstanceOf[ArrayData])
+                case _: MapType =>
+                  gen.write(v.asInstanceOf[MapData])
+                case _: VariantType =>
+                  gen.write(v.asInstanceOf[VariantVal])
+              }
+
+              gen.flush()
+              writer.toString
+            }
+          case _ => v.toString
+        }
+      }.orNull
+    }
+
+    override def output: Seq[Attribute] = child.output
+
+    override protected def withNewChildInternal(newChild: SparkPlan): InlineApproxCountExec =
+      copy(child = newChild)
+  }
+
+  /**
+   * Maintains a collection of the top K values by count
+   * @param k The number of values to keep in descending order by count.
+   */
+  class TopKAccumulator(k: Int) extends AccumulatorV2[(String, Long), Seq[(String, Long)]] {
+    private val topK = new mutable.HashMap[String, Long]()
+
+    def this(k: Int, topK: mutable.HashMap[String, Long]) = {
+      this(k)
+      this.topK.addAll(topK)
+    }
+
+    override def isZero: Boolean = synchronized { topK.isEmpty }
+
+    override def copy(): AccumulatorV2[(String, Long), Seq[(String, Long)]] =
+      new TopKAccumulator(k, topK)
+
+    override def reset(): Unit = synchronized { topK.clear() }
+
+    override def add(v: (String, Long)): Unit = synchronized {
+      val value = v._1
+      val count = v._2
+
+      topK.put(value, count)
+      if (topK.size > k) {
+        // TODO needs to be more efficient
+        // Remove minimum value
+        val min = topK.toSeq.sortBy(_._2).headOption
+        min.foreach { case (key, _) => topK.remove(key) }
+      }
+    }
+
+    override def merge(
+      other: AccumulatorV2[(String, Long), Seq[(String, Long)]]
+    ): Unit = synchronized {
+      other.value.foreach { case (value, count) =>
+        val currCount = topK.getOrElse(value, 0L)
+        add((value, count + currCount))
+      }
+    }
+
+    override def value: Seq[(String, Long)] = synchronized { topK.toSeq.sortBy(_._2).reverse }
   }
 }

@@ -353,14 +353,12 @@ package object debug {
             // TODO can add return the count to save this step?
             val count = countMinSketch.estimateCount(exprsValue)
 
-            accumulator.add((exprsValue, count))
-
-//            val threshold = (countMinSketch.totalCount() * thresholdFraction).asInstanceOf[Long]
-//            // The check if the threshold is greater than 0 is to prevent noise publishing
-//            // counts when only the first few elements of the iterator have been processed
-//            if (threshold > 0 && count > threshold) {
-//              accumulator.add((exprsValue, count))
-//            }
+            val threshold = (countMinSketch.totalCount() * thresholdFraction).asInstanceOf[Long]
+            // The check if the threshold is greater than 0 is to prevent noise publishing
+            // counts when only the first few elements of the iterator have been processed
+            if (threshold > 0 && count > threshold) {
+              accumulator.add((exprsValue, count))
+            }
 
             row
           }
@@ -403,7 +401,7 @@ package object debug {
    * Maintains a collection of the top K values by count
    * @param k The number of values to keep in descending order by count.
    */
-  class TopKAccumulator(k: Int) extends AccumulatorV2[(String, Long), Map[String, Long]] {
+  class TopKAccumulator(k: Int) extends AccumulatorV2[(String, Long), Seq[(String, Long)]] {
     private val topK = new mutable.HashMap[String, Long]()
 
     def this(k: Int, topK: mutable.HashMap[String, Long]) = {
@@ -413,7 +411,7 @@ package object debug {
 
     override def isZero: Boolean = synchronized { topK.isEmpty }
 
-    override def copy(): AccumulatorV2[(String, Long), Map[String, Long]] =
+    override def copy(): AccumulatorV2[(String, Long), Seq[(String, Long)]] =
       new TopKAccumulator(k, topK)
 
     override def reset(): Unit = synchronized { topK.clear() }
@@ -432,7 +430,7 @@ package object debug {
     }
 
     override def merge(
-      other: AccumulatorV2[(String, Long), Map[String, Long]]
+      other: AccumulatorV2[(String, Long), Seq[(String, Long)]]
     ): Unit = synchronized {
       other.value.foreach { case (value, count) =>
         val currCount = topK.getOrElse(value, 0L)
@@ -440,6 +438,6 @@ package object debug {
       }
     }
 
-    override def value: Map[String, Long] = synchronized { topK.toMap }
+    override def value: Seq[(String, Long)] = synchronized { topK.toSeq.sortBy(_._2).reverse }
   }
 }
